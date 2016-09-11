@@ -1,13 +1,12 @@
 #!/usr/local/bin/python3
-from __future__ import print_function
-
 import datetime
 import os
 import os.path
 import signal
+import subprocess
 import sys
 import time
-from subprocess import call
+from enum import Enum
 
 import dateutil.parser
 import httplib2
@@ -39,6 +38,17 @@ BIN_BLINK_TOOL = os.path.join(HOME_DIR, 'bin/blink1-tool')
 
 PRE_ALERT_TIME_MINUTES = 5  # minutes of pre alerting
 CHECK_INTERVAL = 5  # seconds at which status is checked
+
+
+class LEDStatus1(Enum):
+    noEvent = 0,
+    eventNow = 1,
+    eventSoon = 2
+
+
+class LEDStatus2(Enum):
+    free = 0,
+    dnd = 1
 
 
 def get_credentials():
@@ -122,21 +132,29 @@ def format_event(event):
     return "%s - %s: %s" % (event['start'].get('dateTime'), event['end'].get('dateTime'), event['summary'])
 
 
-def get_calendar_status():
-    ret = 0
+def get_system_status():
+    led_status1 = LEDStatus1.noEvent
+
     credentials = get_credentials()
     http = credentials.authorize(httplib2.Http())
     service = discovery.build('calendar', 'v3', http=http)
     current = get_current_event(service)
     if current:
-        ret = 1
+        led_status1 = LEDStatus1.eventNow
         print("Running event:\n%s" % format_event(current))
     else:
         upcoming = get_next_shortly_upcoming_event(service, PRE_ALERT_TIME_MINUTES)
         if upcoming:
-            ret = 2
+            led_status1 = LEDStatus1.eventSoon
             print("Upcoming event:\n%s" % format_event(upcoming))
-    return ret
+
+    led_status2 = LEDStatus2.free
+
+    if is_dnd():
+        print("DND file is set")
+        led_status2 = LEDStatus2.dnd
+
+    return led_status1, led_status2
 
 
 def signal_handler(signal, frame):
@@ -146,24 +164,30 @@ def signal_handler(signal, frame):
 
 
 def execute_blink_cli(param):
-    callarray = [BIN_BLINK_TOOL]
+    callarray = [BIN_BLINK_TOOL, '-q']
     callarray.extend(param)
-    print(callarray)
-    call(callarray)
+    subprocess.call(callarray)
 
 
-def set_blink_status(status):
-    if status == 1:
-        print("Blink status: Running event")
-        execute_blink_cli(["--blue", "--blink", "3"])
-        execute_blink_cli(["--blue"])
-    elif status == 2:
-        print("Blink status: Upcoming event")
-        execute_blink_cli(["--yellow", "--blink", "3"])
-        execute_blink_cli(["--yellow"])
-    else:
-        print("Blink status: Nothing")
-        execute_blink_cli(["--green"])
+def set_blink_status(led_status1, led_status2):
+    if led_status2 == LEDStatus2.dnd:
+        print("Blink status 2: DND")
+        execute_blink_cli(["--red", "-l", "2"])
+    elif led_status2 == LEDStatus2.free:
+        print("Blink status 2: Free")
+        execute_blink_cli(["--green", "-l", "2"])
+
+    if led_status1 == LEDStatus1.eventNow:
+        print("Blink status 1: Running event")
+        execute_blink_cli(["--magenta", "--blink", "3", "-l", "1"])
+        execute_blink_cli(["--magenta", "-l", "1"])
+    elif led_status1 == LEDStatus1.eventSoon:
+        print("Blink status 1: Upcoming event")
+        execute_blink_cli(["--yellow", "--blink", "3", "-l", "1"])
+        execute_blink_cli(["--yellow", "-l", "1"])
+    elif led_status1 == LEDStatus1.noEvent:
+        print("Blink status 1: No event")
+        execute_blink_cli(["--white", "-l", "1"])
 
 
 def is_dnd():
@@ -173,10 +197,8 @@ def is_dnd():
 def main():
     signal.signal(signal.SIGINT, signal_handler)
     while True:
-        if is_dnd():
-            execute_blink_cli(["--red"])
-        else:
-            set_blink_status(get_calendar_status())
+        led_status1, led_status2 = get_system_status()
+        set_blink_status(led_status1, led_status2)
         time.sleep(CHECK_INTERVAL)
 
 
