@@ -35,6 +35,7 @@ CREDENTIAL_PATH = os.path.join(CREDENTIAL_DIR, 'blink1.json')
 CLIENT_SECRET_FILE = os.path.join(CREDENTIAL_DIR, 'client_secret.json')
 DND_FILE = os.path.join(BLINK1_DIR, 'dnd')
 BIN_BLINK_TOOL = os.path.join(HOME_DIR, 'bin/blink1-tool')
+PID_FILE = os.path.join(BLINK1_DIR, '.google-cal-blink1.pid')
 
 PRE_ALERT_TIME_MINUTES = 5  # minutes of pre alerting
 CHECK_INTERVAL = 5  # seconds at which status is checked
@@ -157,9 +158,14 @@ def get_system_status():
     return led_status1, led_status2
 
 
+def remove_pid_file():
+    pass
+
+
 def signal_handler(signal, frame):
     print("Shutting down blink")
     execute_blink_cli(["--off"])
+    os.remove(PID_FILE)
     sys.exit(0)
 
 
@@ -171,31 +177,48 @@ def execute_blink_cli(param):
 
 def set_blink_status(led_status1, led_status2):
     if led_status2 == LEDStatus2.dnd:
-        print("Blink status 2: DND")
-        execute_blink_cli(["--red", "-l", "2"])
+        print("Blink status 1: DND")
+        execute_blink_cli(["--red", "-l", "1"])
     elif led_status2 == LEDStatus2.free:
-        print("Blink status 2: Free")
-        execute_blink_cli(["--green", "-l", "2"])
+        print("Blink status 1: Free")
+        execute_blink_cli(["--green", "-l", "1"])
 
     if led_status1 == LEDStatus1.eventNow:
-        print("Blink status 1: Running event")
-        execute_blink_cli(["--magenta", "--blink", "3", "-l", "1"])
-        execute_blink_cli(["--magenta", "-l", "1"])
+        print("Blink status 2: Running event")
+        execute_blink_cli(["--magenta", "-l", "2"])
     elif led_status1 == LEDStatus1.eventSoon:
-        print("Blink status 1: Upcoming event")
-        execute_blink_cli(["--yellow", "--blink", "3", "-l", "1"])
-        execute_blink_cli(["--yellow", "-l", "1"])
+        print("Blink status 2: Upcoming event")
+        execute_blink_cli(["--yellow", "--blink", "3", "-l", "2"])
+        execute_blink_cli(["--yellow", "-l", "2"])
     elif led_status1 == LEDStatus1.noEvent:
-        print("Blink status 1: No event")
-        execute_blink_cli(["--white", "-l", "1"])
+        print("Blink status 2: No event")
+        execute_blink_cli(["--white", "-l", "2"])
 
 
 def is_dnd():
     return os.path.isfile(DND_FILE)
 
 
+def write_pid_to_file():
+    fp = open(PID_FILE, 'w')
+    fp.write("%d\n" % os.getpid())
+    fp.close()
+
+
 def main():
+    if os.path.isfile(PID_FILE):
+        print("Process already started (see %s)! Stopping current and restarting process!" % PID_FILE)
+        try:
+            with open(PID_FILE) as fp:
+                pid = fp.readline()
+            if len(pid) > 0:
+                print("PID is %s" % pid)
+                os.kill(int(pid), 0)
+        except OSError:
+            print('Process did not exist anymore!')
+
     signal.signal(signal.SIGINT, signal_handler)
+    write_pid_to_file()
     while True:
         led_status1, led_status2 = get_system_status()
         set_blink_status(led_status1, led_status2)
